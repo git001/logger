@@ -34,6 +34,7 @@ const (
 	strBody          = "body"
 	strBytesSent     = "bytesSent"
 	strBytesReceived = "bytesReceived"
+	strReqProto      = "reqProtocol"
 	strRoute         = "route"
 	strError         = "error"
 	strHeader        = "header:"
@@ -60,6 +61,8 @@ type Config struct {
 	// Output is a writter where logs are written
 	// Default: os.Stderr
 	Output io.Writer
+	// Use combined Access log format https://httpd.apache.org/docs/2.4/logs.html#combined
+	CombinedFormat bool
 }
 
 // New ...
@@ -69,6 +72,17 @@ func New(config ...Config) func(*fiber.Ctx) {
 	// Set config if provided
 	if len(config) > 0 {
 		cfg = config[0]
+	}
+	// Check if CombinedFormat is not set and if the
+	// User have not defined there own format
+	if cfg.CombinedFormat {
+		// Definition of combined Access log format https://httpd.apache.org/docs/2.4/logs.html#combined
+		// The first '-' belongs to RFC 1413 identity of the client determined by identd on the clients machine
+		// The second '-' belongs to User determined by HTTP authentication
+		cfg.TimeFormat = "02/Jan/2006:03:04:05 -0700"
+		cfg.Format = "${ip} - - [${time}] \"${method} ${url} ${reqProtocol}\" ${status} ${bytesSent} ${referer} ${ua}\n"
+	} else {
+		cfg.CombinedFormat = false
 	}
 	// Set config default values
 	if cfg.Format == "" {
@@ -111,9 +125,19 @@ func New(config ...Config) func(*fiber.Ctx) {
 			case strTime:
 				return buf.WriteString(timestamp)
 			case strReferer:
-				return buf.WriteString(c.Get(fiber.HeaderReferer))
+				if cfg.CombinedFormat && c.Get(fiber.HeaderReferer) == "" {
+					return buf.WriteString("-")
+				} else {
+					return buf.WriteString(c.Get(fiber.HeaderReferer))
+				}
 			case strProtocol:
 				return buf.WriteString(c.Protocol())
+			case strReqProto:
+				if c.Fasthttp.Request.Header.IsHTTP11() {
+					return buf.WriteString("HTTP/1.1")
+				} else {
+					return buf.WriteString("unknown")
+				}
 			case strIp:
 				return buf.WriteString(c.IP())
 			case strIps:
@@ -127,7 +151,11 @@ func New(config ...Config) func(*fiber.Ctx) {
 			case strUrl:
 				return buf.WriteString(c.OriginalURL())
 			case strUa:
-				return buf.WriteString(c.Get(fiber.HeaderUserAgent))
+				if cfg.CombinedFormat && c.Get(fiber.HeaderUserAgent) == "" {
+					return buf.WriteString("-")
+				} else {
+					return buf.WriteString(c.Get(fiber.HeaderUserAgent))
+				}
 			case strLatency:
 				return buf.WriteString(stop.Sub(start).String())
 			case strStatus:
